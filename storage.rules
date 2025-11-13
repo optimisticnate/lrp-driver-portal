@@ -1,0 +1,38 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAuthed() { return request.auth != null; }
+    function isAdmin() { return isAuthed() && (request.auth.token.admin == true || request.auth.token.role == "admin"); }
+
+    // Ticket attachments live under tickets/{ticketId}/{filename}
+    match /tickets/{ticketId}/{fileName} {
+      allow read, write, delete: if isAuthed();
+    }
+
+    // New Issue Tracker attachments
+    match /issueTickets/{ticketId}/{fileName} {
+      allow read, write, delete: if isAuthed();
+    }
+
+    // Important Info images - all authenticated users have full access
+    match /importantInfo/{itemId}/{fileName} {
+      allow read, write, delete: if isAuthed();
+    }
+
+    // Dropoff location images - authenticated users can read, only admins can write
+    match /dropoffs/{fileName} {
+      allow read, write, delete: if isAuthed();
+    }
+
+    // Directory contact profile pictures - all authenticated users can read, only admins can write
+    match /directory-images/{contactId}/{fileName} {
+      allow read, write, delete: if isAuthed();
+    }
+
+    // SMS/MMS notification images - only admins can upload for notification center
+    match /sms-images/{fileName} {
+      allow read: if true; // Public read for Twilio to fetch
+      allow write, delete: if isAdmin(); // Only admins can upload/delete
+    }
+  }
+}

@@ -1,0 +1,24 @@
+/* src/theme/fonts.css */
+
+/* Font files are now available in /public/assets/fonts */
+
+/* ---- Active: Using font files ---- */
+@font-face {
+  font-family: "Boardson";
+  src:
+    local("Boardson"),
+    url("/assets/fonts/Boardson.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "CelebriSans";
+  src:
+    local("CelebriSans Bold"), local("CelebriSans-Bold"),
+    url("/assets/fonts/CelebriSans-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}

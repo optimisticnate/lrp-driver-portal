@@ -1,0 +1,177 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "rideQueue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "pickupTime", "order": "ASCENDING" },
+        { "fieldPath": "claimedBy", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "liveRides",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "pickupTime", "order": "ASCENDING" },
+        { "fieldPath": "claimedBy", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "claimedRides",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "pickupTime", "order": "ASCENDING" },
+        { "fieldPath": "claimedBy", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "claimLog",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "timestamp", "order": "DESCENDING" },
+        { "fieldPath": "driver", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tickets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "pickupTime", "order": "ASCENDING" },
+        { "fieldPath": "passenger", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timeLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "loggedAt", "order": "DESCENDING" },
+        { "fieldPath": "driver", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "shootoutStats",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "startTime", "order": "DESCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "shootoutStats",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userEmail", "order": "ASCENDING" },
+        { "fieldPath": "startTime", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "shootoutStats",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userEmail", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "startTime", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "userAccess",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "email", "order": "ASCENDING" },
+        { "fieldPath": "access", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "userAccess",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "access", "order": "ASCENDING" },
+        { "fieldPath": "name", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "shootoutStats",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "driverEmail", "order": "ASCENDING" },
+        { "fieldPath": "startTime", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "shootoutStats",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "driverEmail", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timeLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "driverEmail", "order": "ASCENDING" },
+        { "fieldPath": "startTime", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "importantInfo",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "category", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "issueTickets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "sla.breachAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "fcmTokens",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "email", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "outboundMessages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "chatbotKnowledge",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "rideQueue",
+      "fieldPath": "rideNotes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "liveRides",
+      "fieldPath": "rideNotes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "claimedRides",
+      "fieldPath": "rideNotes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "tickets",
+      "fieldPath": "notes",
+      "indexes": []
+    }
+  ]
+}

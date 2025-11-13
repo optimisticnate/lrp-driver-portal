@@ -1,0 +1,322 @@
+name: Manual Deploy Functions & Rules
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: 'What to deploy'
+        required: true
+        type: choice
+        options:
+          - 'functions'
+          - 'firestore:rules'
+          - 'storage'
+          - 'rules' # Both firestore and storage rules
+          - 'both' # Functions + all rules
+        default: 'functions'
+      force_rebuild:
+        description: 'Force rebuild all functions (ignore cache)'
+        required: true
+        type: boolean
+        default: false
+      update_secrets:
+        description: 'Update Twilio secrets (creates new versions & cleans up old ones)'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    name: Manual Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Google Auth
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Setup gcloud
+        if: inputs.deploy_target == 'functions' || inputs.deploy_target == 'both'
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ secrets.FIREBASE_PROJECT_ID }}
+
+      - name: Install Firebase CLI
+        run: npm i -g firebase-tools@latest
+
+      - name: Install Functions dependencies
+        if: inputs.deploy_target == 'functions' || inputs.deploy_target == 'both'
+        working-directory: functions
+        run: npm ci
+
+      # ===== SECRET MANAGEMENT =====
+      # NOTE: This step requires TWILIO_* secrets to be configured in GitHub Secrets
+      # Required GitHub Secrets: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM
+      # These are pushed to GCP Secret Manager and used by Cloud Functions
+
+      - name: Update Twilio Secrets
+        if: inputs.update_secrets && (inputs.deploy_target == 'functions' || inputs.deploy_target == 'both')
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM: ${{ secrets.TWILIO_FROM }}
+        run: |
+          set -euo pipefail
+
+          echo "🔐 Updating Twilio secrets in Secret Manager..."
+          echo ""
+          echo "⚠️  This will create NEW versions and cleanup old ones after deployment"
+          echo ""
+
+          # Update each secret (creates new versions)
+          echo "  • TWILIO_ACCOUNT_SID"
+          echo "$TWILIO_ACCOUNT_SID" | firebase functions:secrets:set TWILIO_ACCOUNT_SID \
+            --project "$FIREBASE_PROJECT_ID" \
+            --data-file=- \
+            --force
+
+          echo "  • TWILIO_AUTH_TOKEN"
+          echo "$TWILIO_AUTH_TOKEN" | firebase functions:secrets:set TWILIO_AUTH_TOKEN \
+            --project "$FIREBASE_PROJECT_ID" \
+            --data-file=- \
+            --force
+
+          echo "  • TWILIO_FROM"
+          echo "$TWILIO_FROM" | firebase functions:secrets:set TWILIO_FROM \
+            --project "$FIREBASE_PROJECT_ID" \
+            --data-file=- \
+            --force
+
+          echo ""
+          echo "✅ Twilio secrets updated successfully"
+          echo "📝 New versions will be used by the next deployment"
+          echo "🗑️  Old versions will be cleaned up after deployment succeeds"
+
+      # ===== DEPLOYMENT SECTION =====
+
+      - name: Deploy Functions
+        if: inputs.deploy_target == 'functions' || inputs.deploy_target == 'both'
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: |
+          DEPLOY_CMD="firebase deploy --only functions --project $FIREBASE_PROJECT_ID --non-interactive"
+
+          if [ "${{ inputs.force_rebuild }}" = "true" ]; then
+            echo "🔨 Force rebuild enabled - using --force flag"
+            $DEPLOY_CMD --force
+          else
+            echo "📦 Normal deployment (using cache when possible)"
+            $DEPLOY_CMD
+          fi
+
+      - name: Deploy Firestore Rules & Indexes
+        if: inputs.deploy_target == 'firestore:rules' || inputs.deploy_target == 'rules' || inputs.deploy_target == 'both'
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: firebase deploy --only firestore:rules,firestore:indexes --project "$FIREBASE_PROJECT_ID" --non-interactive
+
+      - name: Deploy Storage Rules
+        if: inputs.deploy_target == 'storage' || inputs.deploy_target == 'rules' || inputs.deploy_target == 'both'
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.GOOGLE_APPLICATION_CREDENTIALS }}
+        run: firebase deploy --only storage --project "$FIREBASE_PROJECT_ID" --non-interactive
+
+      # ===== POST-DEPLOYMENT CONFIGURATION =====
+
+      - name: Configure Cloud Run environment variables
+        if: inputs.deploy_target == 'functions' || inputs.deploy_target == 'both'
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          GCAL_SA_EMAIL: ${{ secrets.GCAL_SA_EMAIL }}
+          GCAL_SA_PRIVATE_KEY: ${{ secrets.GCAL_SA_PRIVATE_KEY }}
+          GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
+          GMAIL_REPLY_TO: ${{ secrets.GMAIL_REPLY_TO }}
+        run: |
+          set -euo pipefail
+          REGION="us-central1"
+
+          echo "📧 Configuring Cloud Run environment variables..."
+
+          # Common env vars for email functions
+          EMAIL_VARS="^@@^GCAL_SA_EMAIL=${GCAL_SA_EMAIL}@@GCAL_SA_PRIVATE_KEY=${GCAL_SA_PRIVATE_KEY}@@GMAIL_SENDER=${GMAIL_SENDER}@@GMAIL_REPLY_TO=${GMAIL_REPLY_TO}@@GMAIL_USE_DOMAIN_DELEGATION=true"
+
+          # Calendar function (subset of vars)
+          echo "  • apiCalendarFetch"
+          gcloud run services update apicalendarfetch \
+            --region=$REGION \
+            --set-env-vars="^@@^GCAL_SA_EMAIL=${GCAL_SA_EMAIL}@@GCAL_SA_PRIVATE_KEY=${GCAL_SA_PRIVATE_KEY}" \
+            --quiet
+
+          # Email functions (all vars)
+          for SERVICE in sendbulkticketsemail sendshuttleticketemail sendnotificationemail; do
+            echo "  • $SERVICE"
+            gcloud run services update $SERVICE \
+              --region=$REGION \
+              --ingress=all \
+              --set-env-vars="$EMAIL_VARS" \
+              --quiet
+          done
+
+          echo "✅ Cloud Run configuration complete"
+
+      - name: Configure Supabase environment variables
+        if: inputs.deploy_target == 'functions' || inputs.deploy_target == 'both'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          REGION="us-central1"
+
+          echo "🔐 Configuring Supabase environment variables..."
+
+          # Supabase proxy functions
+          for SERVICE in giftcardsquery ordersquery; do
+            echo "  • $SERVICE"
+
+            gcloud run services update $SERVICE \
+              --region=$REGION \
+              --set-env-vars="^@@^SUPABASE_URL=${SUPABASE_URL}@@SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}" \
+              --quiet 2>/dev/null || echo "    ⚠️  Service not found or update failed (might not be deployed yet)"
+          done
+
+          echo "✅ Supabase configuration complete"
+
+      - name: Cleanup Old Secret Versions
+        if: inputs.update_secrets && (inputs.deploy_target == 'functions' || inputs.deploy_target == 'both')
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+
+          echo ""
+          echo "🗑️  Cleaning up old Twilio secret versions..."
+          echo "   (Keeping only the latest version to minimize costs)"
+          echo ""
+
+          SECRETS=(TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM)
+          TOTAL_DELETED=0
+
+          for SECRET in "${SECRETS[@]}"; do
+            echo "  Checking $SECRET..."
+
+            # Get latest version
+            LATEST=$(gcloud secrets versions list "$SECRET" \
+              --project="$FIREBASE_PROJECT_ID" \
+              --filter="state:ENABLED" \
+              --format="value(name)" \
+              --sort-by=~name \
+              --limit=1 2>/dev/null || echo "")
+
+            if [ -z "$LATEST" ]; then
+              echo "    ⚠️  No enabled versions found (this is unexpected)"
+              continue
+            fi
+
+            echo "    ✅ Latest version: $LATEST (keeping this one)"
+
+            # Get ALL enabled versions, then filter out latest in bash
+            ALL_VERSIONS=$(gcloud secrets versions list "$SECRET" \
+              --project="$FIREBASE_PROJECT_ID" \
+              --filter="state:ENABLED" \
+              --format="value(name)" 2>/dev/null || echo "")
+
+            # Filter out the latest version using grep
+            OLD_VERSIONS=$(echo "$ALL_VERSIONS" | grep -v "^${LATEST}$" || echo "")
+
+            if [ -z "$OLD_VERSIONS" ]; then
+              echo "    ✨ No old versions to clean up"
+              continue
+            fi
+
+            # Count and delete old versions
+            OLD_COUNT=$(echo "$OLD_VERSIONS" | wc -w)
+            echo "    🗑️  Deleting $OLD_COUNT old version(s)..."
+
+            echo "$OLD_VERSIONS" | tr ' ' '\n' | while read -r VERSION; do
+              if [ -n "$VERSION" ]; then
+                gcloud secrets versions destroy "$VERSION" \
+                  --secret="$SECRET" \
+                  --project="$FIREBASE_PROJECT_ID" \
+                  --quiet && echo "       Destroyed version $VERSION" || echo "       ⚠️  Failed to delete version $VERSION"
+                TOTAL_DELETED=$((TOTAL_DELETED + 1))
+              fi
+            done
+
+            echo "    ✅ Cleanup complete for $SECRET"
+            echo ""
+          done
+
+          echo "💰 Secret cleanup complete!"
+          echo "   Now keeping only 3 secret versions (1 per secret)"
+          echo "   Cost: \$0.18/month (down from \$0.06 × old_version_count)"
+
+      # ===== VERIFICATION =====
+
+      - name: Verify deployment
+        if: inputs.deploy_target == 'functions' || inputs.deploy_target == 'both'
+        run: |
+          echo ""
+          echo "⏳ Waiting for deployment to stabilize..."
+          sleep 10
+
+          echo ""
+          echo "📊 Deployed Cloud Run services:"
+
+          SERVICES=(apicalendarfetch sendbulkticketsemail sendshuttleticketemail sendnotificationemail)
+
+          for SERVICE in "${SERVICES[@]}"; do
+            echo ""
+            echo "  Service: $SERVICE"
+
+            REVISION=$(gcloud run services describe $SERVICE \
+              --region=us-central1 \
+              --format='value(status.latestReadyRevisionName)' 2>/dev/null || echo "not-found")
+
+            if [ "$REVISION" = "not-found" ]; then
+              echo "    ⚠️  Service not found or not deployed"
+            else
+              echo "    ✅ Latest revision: $REVISION"
+
+              IMAGE=$(gcloud run services describe $SERVICE \
+                --region=us-central1 \
+                --format='value(spec.template.spec.containers[0].image)' 2>/dev/null)
+              echo "    📦 Image: ${IMAGE##*/}"
+            fi
+          done
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════"
+          echo "✅ Manual Deployment Complete"
+          echo "════════════════════════════════════════════"
+          echo ""
+          echo "Target:         ${{ inputs.deploy_target }}"
+          echo "Force Rebuild:  ${{ inputs.force_rebuild }}"
+          echo "Update Secrets: ${{ inputs.update_secrets }}"
+          echo "Project:        lrp---claim-portal"
+          echo ""
+          echo "📝 Next Steps:"
+          echo "  • Check function logs for errors"
+          echo "  • Test affected functionality"
+          echo "  • Monitor GCP billing for cost changes"
+          echo ""
+          echo "🔍 Useful commands:"
+          echo "  firebase functions:log --project lrp---claim-portal --limit 10"
+          echo "  gcloud logging read 'resource.type=cloud_run_revision' --limit=20 --project=lrp---claim-portal"
+          echo ""

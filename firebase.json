@@ -1,0 +1,43 @@
+{
+  "hosting": {
+    "public": "dist",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      { "source": "/service-worker.js", "destination": "/service-worker.js" },
+      {
+        "source": "/manifest.webmanifest",
+        "destination": "/manifest.webmanifest"
+      },
+      {
+        "source": "/games/hyperlane",
+        "destination": "/games/hyperlane/index.html"
+      },
+      {
+        "source": "/games/hyperlane/**",
+        "destination": "/games/hyperlane/index.html"
+      },
+      { "source": "/games", "destination": "/index.html" },
+      { "source": "/games/**", "destination": "/index.html" },
+      { "source": "**", "destination": "/index.html" }
+    ]
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": ["node_modules", ".git", "firebase-debug.log"],
+      "runtime": "nodejs22",
+      "region": "us-central1",
+      "concurrency": 50,
+      "timeoutSeconds": 120,
+      "memory": "256MiB"
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  }
+}

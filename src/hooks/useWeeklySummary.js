@@ -1,0 +1,127 @@
+import { useEffect, useMemo, useState } from "react";
+
+import { dayjs } from "@/utils/time";
+
+import { enrichDriverNames } from "../services/normalizers";
+import logError from "../utils/logError.js";
+
+import { subscribeTimeLogs } from "./firestore";
+
+const inWeek = (d, startOfWeek) => {
+  if (!d) return false;
+  // Convert Firestore Timestamp to Date if needed
+  const dateValue = typeof d?.toDate === "function" ? d.toDate() : d;
+  const day = dayjs(dateValue);
+  const start = dayjs(startOfWeek).startOf("week");
+  const end = start.add(1, "week");
+  return (day.isSame(start) || day.isAfter(start)) && day.isBefore(end);
+};
+
+export default function useWeeklySummary({
+  weekStart = dayjs().startOf("week").toDate(),
+  driverFilter = "",
+  refreshKey = 0,
+} = {}) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Extract complex expression for stable dependency checking
+  const weekStartKey = useMemo(
+    () => weekStart?.toISOString?.() || String(weekStart),
+    [weekStart],
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+    setLoading(true);
+    setError(null);
+    const unsub = subscribeTimeLogs(
+      async (logs) => {
+        if (!isMounted) return;
+        try {
+          const byDriver = new Map();
+          logs.forEach((r) => {
+            if (!inWeek(r.startTime || r.loggedAt, weekStart)) return;
+            if (driverFilter && r.driverEmail !== driverFilter) return;
+            const key = r.driverEmail || "Unknown";
+            const prev = byDriver.get(key) || {
+              driver: key,
+              driverEmail: r.driverEmail || "Unknown",
+              sessions: 0,
+              totalMinutes: 0,
+              firstStart: null,
+              lastEnd: null,
+            };
+            const start = r.startTime;
+            const end = r.endTime;
+            // Use duration field (already in minutes) from normalized data
+            let mins = r.duration || r.durationMin || r.minutes || 0;
+
+            // Subtract paused time from duration
+            const pausedMs = r.totalPausedMs || 0;
+            const pausedMins = Math.floor(pausedMs / 60000);
+            mins = Math.max(0, mins - pausedMins);
+            const firstStart =
+              !prev.firstStart ||
+              (start && start.seconds < prev.firstStart?.seconds)
+                ? start
+                : prev.firstStart;
+            const lastEnd =
+              !prev.lastEnd || (end && end.seconds > prev.lastEnd?.seconds)
+                ? end
+                : prev.lastEnd;
+            byDriver.set(key, {
+              driver: key,
+              driverEmail: r.driverEmail || "Unknown",
+              sessions: prev.sessions + 1,
+              totalMinutes: prev.totalMinutes + mins,
+              firstStart,
+              lastEnd,
+            });
+          });
+          let arr = Array.from(byDriver.values()).map((x) => ({
+            id: x.driver,
+            driver: x.driver,
+            driverEmail: x.driverEmail,
+            sessions: x.sessions,
+            totalMinutes: x.totalMinutes,
+            hours: x.totalMinutes / 60,
+            firstStart: x.firstStart,
+            lastEnd: x.lastEnd,
+          }));
+          arr = await enrichDriverNames(arr);
+          if (!isMounted) return;
+          setRows(arr);
+          setError(null);
+        } catch (err) {
+          logError(err, { where: "useWeeklySummary", action: "process" });
+          if (isMounted) {
+            setError("Failed to build weekly summary.");
+          }
+        } finally {
+          if (isMounted) {
+            setLoading(false);
+          }
+        }
+      },
+      (err) => {
+        if (!isMounted) return;
+        logError(err, { where: "useWeeklySummary", action: "subscribe" });
+        setError(err?.message || "Failed to load weekly summary.");
+        setLoading(false);
+      },
+    );
+
+    return () => {
+      isMounted = false;
+      if (typeof unsub === "function") {
+        unsub();
+      }
+    };
+    // weekStart is safely captured via weekStartKey memo
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [driverFilter, refreshKey, weekStartKey]);
+
+  return { rows, loading, error };
+}

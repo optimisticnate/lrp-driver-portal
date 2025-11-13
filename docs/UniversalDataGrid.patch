@@ -1,0 +1,30 @@
+--- a/src/components/datagrid/UniversalDataGrid.jsx
++++ b/src/components/datagrid/UniversalDataGrid.jsx
+@@ -286,14 +286,26 @@ export default function UniversalDataGrid({
+         const ids = rowSelectionModel.ids;
+         if (ids == null) return [];
+         if (Array.isArray(ids)) return ids;
+         if (ids instanceof Set) return Array.from(ids);
++        // CRITICAL: Check if ids is actually iterable before trying to use it
++        if (typeof ids === "object" && ids !== null && typeof ids[Symbol.iterator] === "function") {
++          try {
++            return Array.from(ids);
++          } catch {
++            return [];
++          }
++        }
+         // ids exists but is not iterable - return empty array
+         return [];
+       }
+       // Object without ids property - try to extract values
+       if (typeof rowSelectionModel.size === "number") {
+-        return Array.from(rowSelectionModel);
++        try {
++          return Array.from(rowSelectionModel);
++        } catch {
++          return [];
++        }
+       }
+     }
+     // Single value - wrap in array
+     return [rowSelectionModel];

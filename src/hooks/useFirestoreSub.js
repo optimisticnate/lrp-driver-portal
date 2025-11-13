@@ -1,0 +1,50 @@
+import { useEffect, useRef, useState } from "react";
+import { onSnapshot } from "firebase/firestore";
+
+import { useAuth } from "../context/AuthContext.jsx";
+import logError from "../utils/logError.js";
+
+export function useFirestoreSub(makeQuery, deps) {
+  const [error, setError] = useState(null);
+  const [docs, setDocs] = useState([]);
+  const readyRef = useRef(false);
+  const { user, authLoading } = useAuth();
+
+  const depsWithAuth = Array.isArray(deps)
+    ? [authLoading, user, ...deps]
+    : [authLoading, user];
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    const q = typeof makeQuery === "function" ? makeQuery() : null;
+    if (!q) return;
+    readyRef.current = true;
+
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setDocs(
+          snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter(Boolean),
+        );
+        setError(null);
+      },
+      (e) => {
+        logError(e, "useFirestoreSub:onSnapshot");
+        setError(e);
+      },
+    );
+
+    return () => {
+      try {
+        unsub();
+      } catch (err) {
+        logError(err, "useFirestoreSub:unsub");
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, depsWithAuth);
+
+  return { docs, error, ready: readyRef.current };
+}
+
+export default useFirestoreSub;

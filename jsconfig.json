@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "src/*": ["src/*"]
+    }
+  },
+  "include": [
+    "src",
+    "functions",
+    "tests",
+    "vite.config.*",
+    "vitest.config.*",
+    "babel.config.*"
+  ]
+}

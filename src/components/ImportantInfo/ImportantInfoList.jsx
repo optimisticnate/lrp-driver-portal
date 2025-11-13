@@ -1,0 +1,578 @@
+import { useMemo, useCallback, useState, useEffect } from "react";
+import PropTypes from "prop-types";
+import dayjs from "dayjs";
+import {
+  Box,
+  Button,
+  Card,
+  CardActions,
+  CardContent,
+  Chip,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Pagination,
+  Select,
+  Stack,
+  TextField,
+  Typography,
+  Link as MuiLink,
+  ImageList,
+  ImageListItem,
+} from "@mui/material";
+import { alpha } from "@mui/material/styles";
+
+import {
+  PROMO_PARTNER_CATEGORIES,
+  PROMO_PARTNER_FILTER_OPTIONS,
+} from "@/constants/importantInfo.js";
+import { formatDateTime, toDayjs } from "@/utils/time.js";
+import ExpandableDetails from "@/components/ExpandableDetails.jsx";
+
+function normalizeRows(items) {
+  if (!Array.isArray(items)) return [];
+  const now = dayjs();
+
+  return items
+    .filter((item) => {
+      // Filter out inactive items
+      if (!item || item.isActive === false) return false;
+
+      // Filter out items scheduled for future publication
+      if (item.publishDate) {
+        const publishDate = dayjs(item.publishDate);
+        if (publishDate.isValid() && publishDate.isAfter(now)) {
+          return false;
+        }
+      }
+
+      return true;
+    })
+    .map((item) => {
+      const rawCategory = item?.category ? String(item.category) : "";
+      const normalizedCategory = PROMO_PARTNER_CATEGORIES.includes(rawCategory)
+        ? rawCategory
+        : null;
+      return { ...item, _cat: normalizedCategory };
+    })
+    .filter((item) => item._cat);
+}
+
+function ensureString(value) {
+  if (value == null) return "";
+  return String(value);
+}
+
+function toTelHref(phone) {
+  if (!phone) return null;
+  const digits = String(phone).replace(/[^\d+]/g, "");
+  if (!digits) return null;
+  return `tel:${digits}`;
+}
+
+function matchesQuery(row, query) {
+  if (!query) return true;
+  const haystack = [
+    row?.title,
+    row?.blurb,
+    row?.details,
+    row?._cat,
+    row?.phone,
+    row?.url,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(query);
+}
+
+function getUpdatedAtValue(input) {
+  const d = toDayjs(input);
+  return d ? d.valueOf() : 0;
+}
+
+export default function ImportantInfoList({
+  items,
+  loading,
+  onSendSms,
+  error,
+}) {
+  const rows = useMemo(() => normalizeRows(items), [items]);
+  const hasRows = rows.length > 0;
+  const showError = Boolean(error) && !loading;
+  const showEmpty = !showError && !loading && !hasRows;
+
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("All");
+  const [sortBy, setSortBy] = useState("title");
+  const [page, setPage] = useState(1);
+  const pageSize = 10; // Show 10 cards per page
+
+  const categories = useMemo(() => PROMO_PARTNER_FILTER_OPTIONS.slice(), []);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [query]);
+
+  // Reset page when filters change
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Intentionally resetting page when filters change
+    setPage(1);
+  }, [debouncedQuery, categoryFilter, sortBy]);
+
+  const filteredRows = useMemo(() => {
+    const q = debouncedQuery.trim().toLowerCase();
+    const safeCategory = PROMO_PARTNER_FILTER_OPTIONS.includes(categoryFilter)
+      ? categoryFilter
+      : "All";
+
+    const filtered = rows.filter((row) => {
+      if (!row) return false;
+      if (safeCategory !== "All" && row._cat !== safeCategory) {
+        return false;
+      }
+      return matchesQuery(row, q);
+    });
+
+    filtered.sort((a, b) => {
+      if (sortBy === "title") {
+        return ensureString(a?.title).localeCompare(ensureString(b?.title));
+      }
+      if (sortBy === "category") {
+        const aLabel = ensureString(a?._cat);
+        const bLabel = ensureString(b?._cat);
+        return aLabel.localeCompare(bLabel);
+      }
+      const aTs = getUpdatedAtValue(a?.updatedAt);
+      const bTs = getUpdatedAtValue(b?.updatedAt);
+      return bTs - aTs;
+    });
+
+    return filtered;
+  }, [rows, debouncedQuery, categoryFilter, sortBy]);
+
+  const handleSendClick = useCallback(
+    (row) => {
+      if (!row) return;
+      const category = row?._cat || row?.category;
+      if (!PROMO_PARTNER_CATEGORIES.includes(category)) return;
+      onSendSms?.(row);
+    },
+    [onSendSms],
+  );
+
+  // Paginate filtered rows
+  const totalPages = Math.ceil(filteredRows.length / pageSize);
+  const paginatedRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    const end = start + pageSize;
+    return filteredRows.slice(start, end);
+  }, [filteredRows, page, pageSize]);
+
+  if (showError) {
+    return (
+      <Box sx={{ p: 2, color: (t) => t.palette.text.primary }}>
+        <Stack
+          spacing={1.5}
+          sx={{
+            bgcolor: (t) => alpha(t.palette.error.dark, 0.9),
+            border: 1,
+            borderColor: "divider",
+            p: 2,
+            borderRadius: 2,
+          }}
+        >
+          <Typography
+            variant="subtitle1"
+            sx={{ color: (t) => alpha(t.palette.error.main, 0.5) }}
+          >
+            Unable to load important information.
+          </Typography>
+          <Typography variant="body2" sx={{ opacity: 0.8 }}>
+            If you have admin access, open the Admin tab to add the first item.
+          </Typography>
+          <Button
+            onClick={() => window.location.reload()}
+            variant="outlined"
+            size="small"
+            sx={{
+              borderColor: (t) => t.palette.primary.main,
+              color: (t) => alpha(t.palette.primary.main, 0.6),
+              width: "fit-content",
+            }}
+          >
+            Refresh
+          </Button>
+        </Stack>
+      </Box>
+    );
+  }
+
+  if (showEmpty) {
+    return (
+      <Box sx={{ p: 2, color: (t) => t.palette.text.primary }}>
+        <Stack
+          spacing={1.5}
+          sx={{
+            bgcolor: (t) => t.palette.background.paper,
+            border: 1,
+            borderColor: "divider",
+            p: 2,
+            borderRadius: 2,
+          }}
+        >
+          <Typography
+            variant="subtitle1"
+            sx={{ color: (t) => alpha(t.palette.primary.main, 0.6) }}
+          >
+            No important info yet.
+          </Typography>
+          <Typography variant="body2" sx={{ opacity: 0.85 }}>
+            Once admins add partners or emergency contacts, they&apos;ll show
+            here with quick share buttons.
+          </Typography>
+        </Stack>
+      </Box>
+    );
+  }
+
+  return (
+    <Box
+      sx={{ width: "100%", display: "flex", flexDirection: "column", gap: 2 }}
+    >
+      <Stack spacing={1.5} sx={{ mb: 0.5 }}>
+        <TextField
+          size="small"
+          placeholder="Search partners, promotions, or referral details…"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          sx={{
+            maxWidth: { md: 640 },
+            bgcolor: (t) => t.palette.background.paper,
+          }}
+          InputProps={{ sx: { color: (t) => t.palette.text.primary } }}
+          inputProps={{ "aria-label": "Search important information" }}
+        />
+      </Stack>
+      <Stack
+        direction={{ xs: "column", md: "row" }}
+        spacing={1}
+        sx={{ flexWrap: "wrap", gap: { xs: 1, md: 1.5 } }}
+      >
+        <FormControl size="small" sx={{ minWidth: 160 }}>
+          <InputLabel sx={{ color: (t) => t.palette.text.primary }}>
+            Category
+          </InputLabel>
+          <Select
+            label="Category"
+            value={categoryFilter}
+            onChange={(event) => setCategoryFilter(event.target.value)}
+            sx={{
+              color: (t) => t.palette.text.primary,
+              bgcolor: (t) => t.palette.background.paper,
+            }}
+          >
+            {categories.map((item) => (
+              <MenuItem key={item} value={item}>
+                {item}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <FormControl size="small" sx={{ minWidth: 180 }}>
+          <InputLabel sx={{ color: (t) => t.palette.text.primary }}>
+            Sort
+          </InputLabel>
+          <Select
+            label="Sort"
+            value={sortBy}
+            onChange={(event) => setSortBy(event.target.value)}
+            sx={{
+              color: (t) => t.palette.text.primary,
+              bgcolor: (t) => t.palette.background.paper,
+            }}
+          >
+            <MenuItem value="title">Title (A–Z)</MenuItem>
+            <MenuItem value="category">Category (A–Z)</MenuItem>
+            <MenuItem value="updated">Updated (newest)</MenuItem>
+          </Select>
+        </FormControl>
+      </Stack>
+
+      {filteredRows.length > 0 && (
+        <Typography variant="body2" sx={{ opacity: 0.7, mb: 1 }}>
+          Showing {paginatedRows.length} of {filteredRows.length} item
+          {filteredRows.length === 1 ? "" : "s"}
+          {debouncedQuery &&
+            ` matching "${debouncedQuery.length > 30 ? debouncedQuery.substring(0, 30) + "…" : debouncedQuery}"`}
+        </Typography>
+      )}
+
+      <Stack spacing={2.5}>
+        {loading && !filteredRows.length ? (
+          <Typography variant="body2" sx={{ opacity: 0.7 }}>
+            Loading important info…
+          </Typography>
+        ) : null}
+
+        {safeSections(paginatedRows, categoryFilter).map(
+          ({ category, items }) => (
+            <Box
+              key={category}
+              sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}
+            >
+              <Typography
+                variant="h6"
+                sx={{ color: (t) => alpha(t.palette.primary.main, 0.6) }}
+              >
+                {category}
+              </Typography>
+              <Stack spacing={1.25}>
+                {items.map((row) => {
+                  const updatedLabel = formatDateTime(row?.updatedAt);
+                  const telHref = toTelHref(row?.phone);
+                  const fallbackKey = `${row?._cat || "category"}-${ensureString(
+                    row?.title,
+                  )}-${getUpdatedAtValue(row?.updatedAt)}`;
+                  const key = row?.id ?? fallbackKey;
+
+                  return (
+                    <Card
+                      key={key}
+                      variant="outlined"
+                      sx={{
+                        bgcolor: (t) => t.palette.background.paper,
+                        borderColor: (t) => t.palette.divider,
+                        borderRadius: 3,
+                      }}
+                    >
+                      <CardContent sx={{ pb: 1.5 }}>
+                        <Stack spacing={1.25}>
+                          <Stack
+                            direction={{ xs: "column", sm: "row" }}
+                            spacing={1}
+                            justifyContent="space-between"
+                            alignItems={{ xs: "flex-start", sm: "center" }}
+                          >
+                            <Stack spacing={0.5} sx={{ minWidth: 0 }}>
+                              <Typography
+                                variant="subtitle1"
+                                sx={{ fontWeight: 700 }}
+                                noWrap
+                              >
+                                {row?.title || "Untitled"}
+                              </Typography>
+                              <Typography
+                                variant="caption"
+                                sx={{ opacity: 0.7 }}
+                              >
+                                Updated {updatedLabel}
+                              </Typography>
+                            </Stack>
+                            <Chip
+                              size="small"
+                              label={category}
+                              sx={{
+                                bgcolor: (t) => t.palette.primary.dark,
+                                color: (t) =>
+                                  alpha(t.palette.primary.main, 0.6),
+                                border: (t) =>
+                                  `1px solid ${t.palette.primary.main}`,
+                                fontWeight: 600,
+                              }}
+                            />
+                          </Stack>
+
+                          <ExpandableDetails
+                            id={
+                              row?.id != null
+                                ? String(row.id)
+                                : row?.docId != null
+                                  ? String(row.docId)
+                                  : row?.title
+                                    ? String(row.title)
+                                    : undefined
+                            }
+                            blurb={row?.blurb ? String(row.blurb) : ""}
+                            details={row?.details ? String(row.details) : ""}
+                          />
+
+                          {row?.images && row.images.length > 0 ? (
+                            <Box>
+                              <ImageList
+                                sx={{ width: "100%", maxHeight: 200 }}
+                                cols={3}
+                                rowHeight={120}
+                              >
+                                {row.images.slice(0, 6).map((image) => (
+                                  <ImageListItem key={image.id}>
+                                    <img
+                                      src={image.url}
+                                      alt={image.name || "Image"}
+                                      loading="lazy"
+                                      style={{
+                                        width: "100%",
+                                        height: "100%",
+                                        objectFit: "cover",
+                                        borderRadius: 4,
+                                      }}
+                                    />
+                                  </ImageListItem>
+                                ))}
+                              </ImageList>
+                              {row.images.length > 6 ? (
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    opacity: 0.7,
+                                    display: "block",
+                                    mt: 0.5,
+                                  }}
+                                >
+                                  +{row.images.length - 6} more image
+                                  {row.images.length - 6 > 1 ? "s" : ""}
+                                </Typography>
+                              ) : null}
+                            </Box>
+                          ) : null}
+
+                          <Stack
+                            direction={{ xs: "column", sm: "row" }}
+                            spacing={1}
+                            sx={{ opacity: 0.85 }}
+                          >
+                            {row?.phone ? (
+                              <Typography variant="body2">
+                                Phone:{" "}
+                                {telHref ? (
+                                  <MuiLink
+                                    href={telHref}
+                                    sx={{
+                                      color: (t) => t.palette.primary.main,
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    {row.phone}
+                                  </MuiLink>
+                                ) : (
+                                  row.phone
+                                )}
+                              </Typography>
+                            ) : null}
+                            {row?.url ? (
+                              <Typography variant="body2">
+                                Link:{" "}
+                                <MuiLink
+                                  href={row.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  sx={{
+                                    color: (t) => t.palette.primary.main,
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  View
+                                </MuiLink>
+                              </Typography>
+                            ) : null}
+                          </Stack>
+                        </Stack>
+                      </CardContent>
+                      <CardActions
+                        sx={{ px: 2, pb: 2, justifyContent: "flex-end" }}
+                      >
+                        {PROMO_PARTNER_CATEGORIES.includes(row?._cat) ? (
+                          <Button
+                            size="small"
+                            variant="contained"
+                            onClick={() => handleSendClick(row)}
+                            sx={{
+                              bgcolor: (t) => t.palette.primary.main,
+                              fontWeight: 600,
+                              "&:hover": {
+                                bgcolor: (t) => t.palette.primary.dark,
+                              },
+                            }}
+                            aria-label="Text this information to a customer"
+                          >
+                            Text to Customer
+                          </Button>
+                        ) : (
+                          <Typography
+                            variant="caption"
+                            sx={{ opacity: 0.7 }}
+                            aria-label="Internal information only"
+                          >
+                            Internal — Not shareable
+                          </Typography>
+                        )}
+                      </CardActions>
+                    </Card>
+                  );
+                })}
+              </Stack>
+            </Box>
+          ),
+        )}
+
+        {!filteredRows.length ? (
+          <Box
+            sx={(t) => ({
+              p: 2,
+              borderRadius: 2,
+              border: `1px solid ${t.palette.divider}`,
+              bgcolor: t.palette.background.paper,
+            })}
+          >
+            <Typography variant="subtitle2" sx={{ opacity: 0.8 }}>
+              No matches for your filters.
+            </Typography>
+          </Box>
+        ) : null}
+      </Stack>
+
+      {/* Pagination */}
+      {totalPages > 1 && filteredRows.length > 0 && (
+        <Stack direction="row" justifyContent="center" sx={{ mt: 3, mb: 1 }}>
+          <Pagination
+            count={totalPages}
+            page={page}
+            onChange={(event, value) => {
+              setPage(value);
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+            color="primary"
+            size="large"
+            showFirstButton
+            showLastButton
+          />
+        </Stack>
+      )}
+    </Box>
+  );
+}
+
+function safeSections(rows, categoryFilter) {
+  const safeCategory = PROMO_PARTNER_FILTER_OPTIONS.includes(categoryFilter)
+    ? categoryFilter
+    : "All";
+  return PROMO_PARTNER_CATEGORIES.filter((category) =>
+    safeCategory === "All" ? true : category === safeCategory,
+  )
+    .map((category) => ({
+      category,
+      items: rows.filter((row) => row._cat === category),
+    }))
+    .filter((section) => section.items.length > 0);
+}
+
+ImportantInfoList.propTypes = {
+  items: PropTypes.arrayOf(PropTypes.object),
+  loading: PropTypes.bool,
+  onSendSms: PropTypes.func,
+  error: PropTypes.any,
+};

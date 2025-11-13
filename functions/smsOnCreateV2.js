@@ -1,0 +1,94 @@
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { logger } = require("firebase-functions/v2");
+
+let twilioFactory = null;
+try {
+  twilioFactory = require("twilio");
+} catch (error) {
+  logger.warn("smsOnCreateV2:twilio-missing", error?.message || error);
+}
+const { admin } = require("./_admin");
+
+async function deliverSms(payload) {
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  const from = process.env.TWILIO_FROM;
+
+  if (!sid || !token || !from) {
+    logger.warn("smsOnCreateV2:twilioMissing", {
+      reason: "Twilio secrets are not configured",
+      hasSid: Boolean(sid),
+      hasToken: Boolean(token),
+      hasFrom: Boolean(from),
+    });
+    return;
+  }
+
+  if (!twilioFactory) {
+    logger.warn("smsOnCreateV2:twilio-unavailable", {
+      reason: "twilio dependency not installed",
+      to: payload.to,
+    });
+    return;
+  }
+
+  const messagePayload = {
+    to: payload.to,
+    from,
+    body: payload.body,
+  };
+
+  // Add media URL for MMS if provided
+  if (payload.mediaUrl) {
+    messagePayload.mediaUrl = Array.isArray(payload.mediaUrl)
+      ? payload.mediaUrl
+      : [payload.mediaUrl];
+    logger.info("smsOnCreateV2:mms", {
+      to: payload.to,
+      mediaCount: messagePayload.mediaUrl.length,
+    });
+  }
+
+  await twilioFactory(sid, token).messages.create(messagePayload);
+}
+
+const smsOnCreateV2 = onDocumentCreated(
+  {
+    document: "outboundMessages/{id}",
+    region: "us-central1",
+  },
+  async (event) => {
+    const data = event.data?.data();
+
+    if (!data?.to || !data?.body) {
+      logger.warn("smsOnCreateV2:skip", {
+        reason: "missing payload",
+        id: event?.params?.id,
+      });
+      return;
+    }
+
+    try {
+      await deliverSms(data);
+      await event.data.ref.set(
+        {
+          status: "sent",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (error) {
+      logger.error("smsOnCreateV2:error", error?.message || error);
+      await event.data.ref.set(
+        {
+          status: "error",
+          error: error?.message || "sms-send-failed",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
+  },
+);
+
+module.exports = { smsOnCreateV2 };

@@ -1,0 +1,59 @@
+{
+  "agents": [
+    {
+      "id": "repo-doctor",
+      "name": "Repo Doctor",
+      "description": "Scans code for DataGrid, Firestore, and SW/push issues; suggests and applies safe patches.",
+      "scopes": [
+        "src/**",
+        "public/**"
+      ],
+      "rules": [
+        "Badge counts reflect collection subscriptions (Live/Queue/Claimed)",
+        "Ensure preview/status parity between TicketScanner and Tickets grid.",
+        "Harden SW: waitUntil + notificationclick when closed; ensure VAPID key used.",
+        "Migrate legacy TimeLogs to fs",
+        "Never empty catch",
+        "Prefer services/fs wrappers",
+        "Respect LRP theme",
+        "Use withExponentialBackoff for writes",
+        "Route all errors through captureError (Sentry if DSN set).",
+        "Gate noisy logs behind feature flags.",
+        "Store UTC instants; never reinterpret ISO with tz(..., true).",
+        "Persist DataGrid density as a string; allow toolbar density changes.",
+        "Service Worker clock-out: credentials include + check response.ok.",
+        "TimeLogs filters OR across driverId/userId/driverEmail/userEmail.",
+        "Emit row.id from Firestore doc id; keep logicalId separately.",
+        "Keep utils pure (no JSX in utils); place components under src/components/."
+      ]
+    },
+    {
+      "id": "ui-polish",
+      "name": "UI Polish",
+      "description": "Applies LRP theme, DataGrid defaults, accessibility and contrast fixes, consistent spacing.",
+      "scopes": [
+        "src/components/**"
+      ],
+      "rules": [
+        "Add focus outlines",
+        "CSV builder/import/preview + batch commit",
+        "Disable submit while pending; validation shake + helper text",
+        "No ad-hoc CSS; use sx",
+        "Persist tab + drafts to localStorage",
+        "RideEntryForm uses MUI Grid v1 only",
+        "Tickets page: tabs (Manage/Generate), scanner via FAB only, bulk export/email.",
+        "Use LrpDataGridPro for all grids; persist visibility and debounce quick filter.",
+        "Use shared LrpDataGridPro if present",
+        "Include DiagnosticsPanel for admin/settings.",
+        "Surface clock-out failures to user; open /timeclock for recovery.",
+        "Use SnackbarProvider for toasts; no ad-hoc snackbars.",
+        "Focus-visible outlines; respect reduced motion.",
+        "Adopt LoadingButtonLite for pending submits.",
+        "Announce success via aria live + toast; haptics on confirm.",
+        "Prefer WebP with PNG fallback in Drop-Off images (picture/srcSet or image-set).",
+        "Prefer native <picture>/<source> and CSS image-set for WebP; no runtime probes.",
+        "Use ErrorBoundary around major pages."
+      ]
+    }
+  ]
+}

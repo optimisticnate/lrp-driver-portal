@@ -1,0 +1,17 @@
+/* MUI X DataGrid v8 styles
+ * MUI v8 DataGrid Pro auto-imports styles via JS modules (no separate CSS file).
+ * This file contains additional custom styling for better grid UX.
+ */
+
+/* Additional grid styling for better visibility */
+.MuiDataGrid-root {
+  min-height: 300px !important;
+}
+
+.MuiDataGrid-columnHeaders {
+  min-height: 56px !important;
+}
+
+.MuiDataGrid-virtualScroller {
+  min-height: 200px !important;
+}

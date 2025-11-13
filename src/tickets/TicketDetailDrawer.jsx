@@ -1,0 +1,891 @@
+import * as React from "react";
+import {
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Divider,
+  Drawer,
+  IconButton,
+  MenuItem,
+  Stack,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@mui/material";
+import CloseIcon from "@mui/icons-material/Close";
+import UploadIcon from "@mui/icons-material/UploadFile";
+import VisibilityIcon from "@mui/icons-material/Visibility";
+
+import {
+  addTicketComment,
+  updateTicket,
+  addWatcher,
+  deleteTicketsByIds,
+  snapshotTicketsByIds,
+  restoreTickets,
+  subscribeTicketComments,
+} from "@/services/tickets.js";
+import { getUserContacts, fetchAllUsersAccess } from "@/services/users.js";
+import { dayjs, formatDateTime } from "@/utils/time";
+import logError from "@/utils/logError.js";
+import { useSnack } from "@/components/feedback/SnackbarProvider.jsx";
+import { APP_BAR_HEIGHT } from "@/layout/constants.js";
+import { formatAssigneeLabel } from "@/lib/assignees.js";
+
+import { subscribeTicketAttachments, uploadTicketFiles } from "./attachments";
+
+const STATUS_OPTIONS = [
+  "open",
+  "in_progress",
+  "resolved",
+  "closed",
+  "breached",
+];
+const PRIORITY_OPTIONS = ["low", "normal", "high", "urgent"];
+const CATEGORY_OPTIONS = ["vehicle", "marketing", "tech", "moovs"];
+
+export default function TicketDetailDrawer({
+  open,
+  onClose,
+  ticket,
+  currentUser,
+  onTicketUpdated,
+  isAdmin = false,
+}) {
+  const [comment, setComment] = React.useState("");
+  const [commentBusy, setCommentBusy] = React.useState(false);
+  const [updateBusy, setUpdateBusy] = React.useState(false);
+  const [uploadBusy, setUploadBusy] = React.useState(false);
+  const [watcherBusy, setWatcherBusy] = React.useState(false);
+  const [attachments, setAttachments] = React.useState([]);
+  const [attachmentsLoading, setAttachmentsLoading] = React.useState(false);
+  const [attachmentsError, setAttachmentsError] = React.useState(null);
+  const [watcherContacts, setWatcherContacts] = React.useState({});
+  const [allUsers, setAllUsers] = React.useState([]);
+  const [usersLoading, setUsersLoading] = React.useState(false);
+  const [deleteBusy, setDeleteBusy] = React.useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
+  const [comments, setComments] = React.useState([]);
+  const [commentsLoading, setCommentsLoading] = React.useState(false);
+  const [commentsError, setCommentsError] = React.useState(null);
+  const { show } = useSnack();
+  const lastDeletedRef = React.useRef([]);
+
+  const ticketId = ticket?.id || null;
+  const watchers = React.useMemo(
+    () =>
+      Array.isArray(ticket?.watchers)
+        ? Array.from(new Set(ticket.watchers))
+        : [],
+    [ticket?.watchers],
+  );
+
+  const currentUserId = React.useMemo(() => {
+    return (
+      currentUser?.uid ||
+      currentUser?.email ||
+      currentUser?.id ||
+      currentUser?.userId ||
+      null
+    );
+  }, [
+    currentUser?.email,
+    currentUser?.id,
+    currentUser?.uid,
+    currentUser?.userId,
+  ]);
+
+  const isWatching = React.useMemo(() => {
+    if (!currentUserId) return false;
+    return watchers.includes(currentUserId);
+  }, [currentUserId, watchers]);
+
+  React.useEffect(() => {
+    if (!open) {
+      setComment("");
+      return;
+    }
+    setComment("");
+  }, [open, ticketId]);
+
+  React.useEffect(() => {
+    if (!open || !ticketId) {
+      setComments([]);
+      setCommentsError(null);
+      setCommentsLoading(false);
+      return () => {};
+    }
+    setCommentsLoading(true);
+    setCommentsError(null);
+    const unsubscribe = subscribeTicketComments(ticketId, ({ rows, error }) => {
+      if (error) {
+        setCommentsError(error);
+        setCommentsLoading(false);
+        return;
+      }
+      setComments(Array.isArray(rows) ? rows : []);
+      setCommentsLoading(false);
+    });
+    return () => {
+      try {
+        unsubscribe?.();
+      } catch (err) {
+        logError(err, { where: "TicketDetailDrawer.cleanup.comments" });
+      }
+    };
+  }, [open, ticketId]);
+
+  React.useEffect(() => {
+    if (!open || !ticketId) {
+      setAttachments([]);
+      return () => {};
+    }
+    setAttachmentsLoading(true);
+    setAttachmentsError(null);
+    const unsubscribe = subscribeTicketAttachments(
+      ticketId,
+      ({ rows, error }) => {
+        if (error) {
+          setAttachmentsError(error);
+          setAttachmentsLoading(false);
+          return;
+        }
+        setAttachments(rows || []);
+        setAttachmentsLoading(false);
+      },
+    );
+    return () => {
+      try {
+        unsubscribe?.();
+      } catch (err) {
+        logError(err, { where: "TicketDetailDrawer.cleanup.attachments" });
+      }
+    };
+  }, [open, ticketId]);
+
+  React.useEffect(() => {
+    if (!open || !watchers.length) {
+      setWatcherContacts({});
+      return;
+    }
+    let cancelled = false;
+    Promise.all(
+      watchers.map(async (id) => {
+        try {
+          const info = await getUserContacts(id);
+          return [id, info];
+        } catch (err) {
+          logError(err, { where: "TicketDetailDrawer.loadWatcher", id });
+          return [id, null];
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      const next = {};
+      entries.forEach(([id, info]) => {
+        if (!id) return;
+        next[id] = info || {};
+      });
+      setWatcherContacts(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, ticketId, watchers]);
+
+  React.useEffect(() => {
+    if (!open || !isAdmin) {
+      setAllUsers([]);
+      setUsersLoading(false);
+      return;
+    }
+    setUsersLoading(true);
+    fetchAllUsersAccess()
+      .then((users) => {
+        setAllUsers(users || []);
+      })
+      .catch((err) => {
+        logError(err, { where: "TicketDetailDrawer.fetchUsers" });
+        setAllUsers([]);
+      })
+      .finally(() => {
+        setUsersLoading(false);
+      });
+  }, [isAdmin, open]);
+
+  const handleCommentSubmit = React.useCallback(async () => {
+    const trimmed = comment.trim();
+    if (!ticketId || !trimmed) return;
+    setCommentBusy(true);
+    try {
+      await addTicketComment(ticketId, {
+        body: trimmed,
+        author: {
+          userId: currentUserId,
+          displayName:
+            currentUser?.displayName ||
+            currentUser?.name ||
+            currentUser?.email ||
+            "Unknown",
+        },
+      });
+      const optimistic = ticket ? { ...ticket } : { id: ticketId };
+      optimistic.lastCommentAt = dayjs();
+      optimistic.updatedAt = dayjs();
+      onTicketUpdated?.(optimistic);
+      setComment("");
+      show("Comment added.", "success");
+    } catch (error) {
+      logError(error, { where: "TicketDetailDrawer.comment", ticketId });
+      show(error?.message || "Failed to add comment.", "error");
+    } finally {
+      setCommentBusy(false);
+    }
+  }, [
+    comment,
+    currentUser?.displayName,
+    currentUser?.email,
+    currentUser?.name,
+    currentUserId,
+    onTicketUpdated,
+    show,
+    ticket,
+    ticketId,
+  ]);
+
+  const handleFieldChange = React.useCallback(
+    async (field, value) => {
+      if (!ticketId || !isAdmin) return;
+      setUpdateBusy(true);
+      try {
+        const updatePayload = { [field]: value };
+
+        // If changing assignee, create proper assignee object
+        if (field === "assignee") {
+          const selectedUser = allUsers.find((u) => u.email === value);
+          if (selectedUser) {
+            updatePayload.assignee = {
+              userId: selectedUser.email.split("@")[0],
+              email: selectedUser.email,
+              displayName: selectedUser.name || selectedUser.email,
+            };
+          }
+        }
+
+        await updateTicket(ticketId, updatePayload);
+
+        const optimisticUpdate = {
+          ...ticket,
+          ...updatePayload,
+          updatedAt: dayjs(),
+        };
+
+        onTicketUpdated?.(optimisticUpdate);
+        show(`Support ticket ${field} updated.`, "success");
+      } catch (error) {
+        logError(error, {
+          where: "TicketDetailDrawer.update",
+          ticketId,
+          field,
+        });
+        show(error?.message || "Failed to update support ticket.", "error");
+      } finally {
+        setUpdateBusy(false);
+      }
+    },
+    [allUsers, isAdmin, onTicketUpdated, show, ticket, ticketId],
+  );
+
+  const handleUploadFiles = React.useCallback(
+    async (event) => {
+      if (!ticketId) return;
+      const files = Array.from(event.target.files || []);
+      event.target.value = "";
+      if (!files.length) return;
+      setUploadBusy(true);
+      try {
+        await uploadTicketFiles(ticketId, files, currentUser);
+        show(
+          `${files.length} file${files.length > 1 ? "s" : ""} uploaded.`,
+          "success",
+        );
+      } catch (error) {
+        logError(error, { where: "TicketDetailDrawer.upload", ticketId });
+        show(error?.message || "Failed to upload attachment.", "error");
+      } finally {
+        setUploadBusy(false);
+      }
+    },
+    [currentUser, show, ticketId],
+  );
+
+  const handleAddWatcher = React.useCallback(async () => {
+    if (!ticketId || !currentUserId) return;
+    setWatcherBusy(true);
+    try {
+      await addWatcher(ticketId, currentUserId);
+      const existing = Array.isArray(ticket?.watchers) ? ticket.watchers : [];
+      const mergedWatchers = Array.from(new Set([...existing, currentUserId]));
+      onTicketUpdated?.({
+        ...ticket,
+        watchers: mergedWatchers,
+        updatedAt: dayjs(),
+      });
+      show("Added to watchers.", "success");
+    } catch (error) {
+      logError(error, { where: "TicketDetailDrawer.addWatcher", ticketId });
+      show(error?.message || "Unable to add watcher.", "error");
+    } finally {
+      setWatcherBusy(false);
+    }
+  }, [currentUserId, onTicketUpdated, show, ticket, ticketId]);
+
+  const handleDeleteTicket = React.useCallback(() => {
+    if (!ticketId) return;
+    setDeleteDialogOpen(true);
+  }, [ticketId]);
+
+  const handleDeleteDialogClose = React.useCallback(() => {
+    if (deleteBusy) return;
+    setDeleteDialogOpen(false);
+  }, [deleteBusy]);
+
+  const handleUndoDelete = React.useCallback(async () => {
+    if (!lastDeletedRef.current?.length) return;
+    const pendingRestore = [...lastDeletedRef.current];
+    setDeleteBusy(true);
+    try {
+      await restoreTickets(pendingRestore);
+      const [restored] = pendingRestore;
+      if (restored) {
+        onTicketUpdated?.({ id: restored.id, ...restored.data });
+      }
+      show("Ticket restored.", "success");
+      lastDeletedRef.current = [];
+    } catch (error) {
+      logError(error, {
+        where: "TicketDetailDrawer.undoDelete",
+        ticketIds: pendingRestore.map((item) => item?.id).filter(Boolean),
+      });
+      show(error?.message || "Failed to restore ticket.", "error");
+    } finally {
+      setDeleteBusy(false);
+    }
+  }, [onTicketUpdated, show]);
+
+  const handleConfirmDelete = React.useCallback(async () => {
+    if (!ticketId) return;
+    setDeleteBusy(true);
+    setDeleteDialogOpen(false);
+    try {
+      const snapshots = await snapshotTicketsByIds([ticketId]);
+      lastDeletedRef.current = snapshots;
+      await deleteTicketsByIds([ticketId]);
+      const hasSnapshots = snapshots.length > 0;
+      show(
+        hasSnapshots ? "Ticket deleted. Undo?" : "Ticket deleted successfully.",
+        "success",
+        hasSnapshots
+          ? {
+              autoHideDuration: 6000,
+              action: (
+                <Button color="inherit" size="small" onClick={handleUndoDelete}>
+                  Undo
+                </Button>
+              ),
+            }
+          : {},
+      );
+      onClose?.();
+    } catch (error) {
+      logError(error, { where: "TicketDetailDrawer.deleteTicket", ticketId });
+      show(error?.message || "Failed to delete ticket.", "error");
+    } finally {
+      setDeleteBusy(false);
+    }
+  }, [handleUndoDelete, onClose, show, ticketId]);
+
+  const handleClose = React.useCallback(() => {
+    if (commentBusy || updateBusy || uploadBusy || watcherBusy || deleteBusy)
+      return;
+    onClose?.();
+  }, [commentBusy, deleteBusy, onClose, updateBusy, uploadBusy, watcherBusy]);
+
+  const isNate = React.useMemo(() => {
+    const userEmail = (
+      currentUser?.email ||
+      currentUser?.uid ||
+      ""
+    ).toLowerCase();
+    return userEmail === "nate@lakeridepros.com";
+  }, [currentUser?.email, currentUser?.uid]);
+
+  const formattedCreated = formatDateTime(ticket?.createdAt);
+  const formattedUpdated = formatDateTime(ticket?.updatedAt);
+  const formattedSla = ticket?.sla?.breachAt
+    ? formatDateTime(ticket.sla.breachAt)
+    : "N/A";
+
+  return (
+    <>
+      <Drawer
+        anchor="right"
+        open={open}
+        onClose={handleClose}
+        PaperProps={{
+          sx: (theme) => {
+            const safeTop = `calc(${APP_BAR_HEIGHT}px + env(safe-area-inset-top, 0px))`;
+            return {
+              width: { xs: 360, sm: 400, md: 420 },
+              bgcolor: (t) => t.palette.background.paper,
+              top: safeTop,
+              height: `calc(100% - ${safeTop})`,
+              borderLeft: `1px solid ${theme.palette.divider}`,
+              borderTop: "none",
+            };
+          },
+        }}
+      >
+        <Box
+          sx={{
+            p: 2,
+            height: "100%",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+          }}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="space-between"
+          >
+            <Box>
+              <Typography variant="h6" sx={{ mb: 0.5 }}>
+                {ticket?.title || "Support Ticket"}
+              </Typography>
+              <Stack direction="row" spacing={2}>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                  {ticket?.incidentNumber || "N/A"}
+                </Typography>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                  ID: {ticketId || "N/A"}
+                </Typography>
+              </Stack>
+            </Box>
+            <IconButton
+              onClick={handleClose}
+              aria-label="Close support ticket details"
+            >
+              <CloseIcon />
+            </IconButton>
+          </Stack>
+
+          <Typography
+            variant="body2"
+            sx={{ whiteSpace: "pre-line", color: "text.secondary" }}
+          >
+            {ticket?.description || "No description provided."}
+          </Typography>
+
+          <Stack direction="row" spacing={1} flexWrap="wrap">
+            <Chip
+              size="small"
+              label={`Category: ${ticket?.category || "N/A"}`}
+            />
+            <Chip
+              size="small"
+              label={`Priority: ${ticket?.priority || "N/A"}`}
+              color="default"
+            />
+            <Chip
+              size="small"
+              label={`Status: ${ticket?.status || "N/A"}`}
+              color={ticket?.status === "open" ? "warning" : "default"}
+            />
+            {ticket?.sla?.breachAt ? (
+              <Chip size="small" label={`SLA: ${formattedSla}`} color="error" />
+            ) : null}
+          </Stack>
+
+          <Stack spacing={1.5}>
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={1.5}
+              alignItems={{ sm: "center" }}
+            >
+              <TextField
+                select
+                size="small"
+                label="Status"
+                value={ticket?.status || "open"}
+                onChange={(event) =>
+                  handleFieldChange("status", event.target.value)
+                }
+                disabled={updateBusy || !isAdmin}
+                sx={{ minWidth: 180 }}
+              >
+                {STATUS_OPTIONS.map((status) => (
+                  <MenuItem key={status} value={status}>
+                    {status}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField
+                select
+                size="small"
+                label="Priority"
+                value={ticket?.priority || "normal"}
+                onChange={(event) =>
+                  handleFieldChange("priority", event.target.value)
+                }
+                disabled={updateBusy || !isAdmin}
+                sx={{ minWidth: 180 }}
+              >
+                {PRIORITY_OPTIONS.map((priority) => (
+                  <MenuItem key={priority} value={priority}>
+                    {priority}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Stack>
+
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={1.5}
+              alignItems={{ sm: "center" }}
+            >
+              <TextField
+                select
+                size="small"
+                label="Category"
+                value={ticket?.category || "tech"}
+                onChange={(event) =>
+                  handleFieldChange("category", event.target.value)
+                }
+                disabled={updateBusy || !isAdmin}
+                sx={{ minWidth: 180 }}
+              >
+                {CATEGORY_OPTIONS.map((category) => (
+                  <MenuItem key={category} value={category}>
+                    {category}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField
+                select
+                size="small"
+                label="Assignee"
+                value={ticket?.assignee?.email || ""}
+                onChange={(event) =>
+                  handleFieldChange("assignee", event.target.value)
+                }
+                disabled={updateBusy || usersLoading || !isAdmin}
+                sx={{ minWidth: 180 }}
+                helperText={
+                  usersLoading
+                    ? "Loading users..."
+                    : ticket?.assignee?.displayName
+                      ? formatAssigneeLabel(ticket.assignee)
+                      : ""
+                }
+              >
+                {allUsers.map((user) => (
+                  <MenuItem key={user.email} value={user.email}>
+                    {user.name || user.email}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Stack>
+          </Stack>
+
+          <Divider light />
+
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Button
+              component="label"
+              htmlFor="ticket-file-upload"
+              startIcon={
+                uploadBusy ? <CircularProgress size={16} /> : <UploadIcon />
+              }
+              variant="outlined"
+              disabled={uploadBusy}
+            >
+              Upload
+              <input
+                id="ticket-file-upload"
+                style={{ display: "none" }}
+                multiple
+                type="file"
+                accept="image/*,.pdf,.doc,.docx,.txt,.log"
+                onChange={handleUploadFiles}
+              />
+            </Button>
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
+              Attach screenshots, PDFs, or logs.
+            </Typography>
+          </Stack>
+
+          <Box>
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              sx={{ mb: 1 }}
+            >
+              <Typography variant="subtitle2">Attachments</Typography>
+              {attachmentsLoading ? <CircularProgress size={16} /> : null}
+            </Stack>
+            {attachmentsError ? (
+              <Typography variant="caption" color="error">
+                {attachmentsError?.message || "Failed to load attachments."}
+              </Typography>
+            ) : null}
+            {!attachmentsLoading && !attachments.length ? (
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                No attachments yet.
+              </Typography>
+            ) : null}
+            <Stack spacing={1} sx={{ mt: attachments.length ? 1 : 0 }}>
+              {attachments.map((attachment) => (
+                <Button
+                  key={attachment.id}
+                  component="a"
+                  href={attachment.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  variant="outlined"
+                  size="small"
+                  endIcon={<VisibilityIcon fontSize="small" />}
+                  sx={{ justifyContent: "flex-start" }}
+                >
+                  {attachment.name || attachment.id}
+                </Button>
+              ))}
+            </Stack>
+          </Box>
+
+          <Divider light />
+
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography variant="subtitle2">Watchers</Typography>
+            <Tooltip
+              title={
+                isWatching
+                  ? "You're watching this support ticket"
+                  : "Add me as a watcher"
+              }
+            >
+              <span>
+                <Button
+                  size="small"
+                  variant="contained"
+                  disabled={!currentUserId || isWatching || watcherBusy}
+                  onClick={handleAddWatcher}
+                  sx={{
+                    bgcolor: (t) => t.palette.primary.main,
+                    "&:hover": { bgcolor: (t) => t.palette.primary.dark },
+                  }}
+                >
+                  {isWatching
+                    ? "Watching"
+                    : watcherBusy
+                      ? "Adding..."
+                      : "Watch"}
+                </Button>
+              </span>
+            </Tooltip>
+          </Stack>
+          <Stack direction="row" spacing={1} flexWrap="wrap">
+            {watchers.length === 0 ? (
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                No watchers yet.
+              </Typography>
+            ) : (
+              watchers.map((id) => {
+                const info = watcherContacts[id] || {};
+                const label = info.displayName || info.email || id;
+                return <Chip key={id} size="small" label={label} />;
+              })
+            )}
+          </Stack>
+
+          <Divider light />
+
+          <Box>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              Comments
+            </Typography>
+            {commentsLoading ? (
+              <Stack
+                direction="row"
+                spacing={1}
+                alignItems="center"
+                sx={{ color: "text.secondary" }}
+              >
+                <CircularProgress size={16} />
+                <Typography variant="body2">Loading comments…</Typography>
+              </Stack>
+            ) : commentsError ? (
+              <Typography variant="body2" sx={{ color: "error.light" }}>
+                Failed to load comments.
+              </Typography>
+            ) : comments.length === 0 ? (
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                No comments yet.
+              </Typography>
+            ) : (
+              <Stack spacing={1}>
+                {comments.map((entry) => {
+                  const authorLabel =
+                    entry?.author?.displayName ||
+                    entry?.author?.email ||
+                    entry?.author?.userId ||
+                    "Unknown";
+                  return (
+                    <Box
+                      key={entry.id}
+                      sx={{
+                        borderRadius: 1,
+                        border: (t) => `1px solid ${t.palette.divider}`,
+                        px: 1.5,
+                        py: 1,
+                        bgcolor: (t) => t.palette.background.default,
+                      }}
+                    >
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography variant="subtitle2">
+                          {authorLabel}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          sx={{ color: "text.secondary" }}
+                        >
+                          {formatDateTime(entry?.createdAt)}
+                        </Typography>
+                      </Stack>
+                      <Typography variant="body2" sx={{ mt: 0.5 }}>
+                        {entry?.body || "N/A"}
+                      </Typography>
+                    </Box>
+                  );
+                })}
+              </Stack>
+            )}
+          </Box>
+
+          <Divider light />
+
+          <Box>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              Add Comment
+            </Typography>
+            <TextField
+              value={comment}
+              onChange={(event) => setComment(event.target.value)}
+              multiline
+              minRows={2}
+              fullWidth
+              placeholder="Share updates or troubleshooting notes"
+              disabled={commentBusy}
+            />
+            <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+              <Button
+                variant="contained"
+                onClick={handleCommentSubmit}
+                disabled={commentBusy || !comment.trim()}
+                sx={{
+                  bgcolor: (t) => t.palette.primary.main,
+                  "&:hover": { bgcolor: (t) => t.palette.primary.dark },
+                }}
+              >
+                {commentBusy ? "Posting..." : "Comment"}
+              </Button>
+              <Button
+                onClick={handleClose}
+                disabled={commentBusy || updateBusy || uploadBusy}
+              >
+                Close
+              </Button>
+            </Stack>
+          </Box>
+
+          <Divider light />
+
+          {isNate && (
+            <>
+              <Box>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  onClick={handleDeleteTicket}
+                  disabled={deleteBusy}
+                  fullWidth
+                >
+                  {deleteBusy ? "Deleting..." : "Delete Ticket"}
+                </Button>
+                <Typography
+                  variant="caption"
+                  sx={{ display: "block", color: "text.secondary", mt: 0.5 }}
+                >
+                  Only you (Nate) can delete tickets.
+                </Typography>
+              </Box>
+              <Divider light />
+            </>
+          )}
+
+          <Box sx={{ mt: "auto" }}>
+            <Typography
+              variant="caption"
+              sx={{ display: "block", color: "text.secondary" }}
+            >
+              Created: {formattedCreated}
+            </Typography>
+            <Typography
+              variant="caption"
+              sx={{ display: "block", color: "text.secondary" }}
+            >
+              Updated: {formattedUpdated}
+            </Typography>
+          </Box>
+        </Box>
+      </Drawer>
+      <Dialog open={deleteDialogOpen} onClose={handleDeleteDialogClose}>
+        <DialogTitle>Delete Support Ticket</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to delete ticket{" "}
+            {ticket?.incidentNumber || ticketId || "this ticket"}? This action
+            cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleDeleteDialogClose} disabled={deleteBusy}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirmDelete}
+            color="error"
+            variant="contained"
+            disabled={deleteBusy}
+            sx={{
+              bgcolor: (theme) => theme.palette.error.main,
+              "&:hover": {
+                bgcolor: (theme) => theme.palette.error.dark,
+              },
+            }}
+          >
+            {deleteBusy ? "Deleting..." : "Delete"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  );
+}

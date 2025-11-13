@@ -1,0 +1,24 @@
+{
+  "name": "lrp-functions",
+  "private": true,
+  "engines": {
+    "node": "22"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.81.1",
+    "firebase-admin": "^13.5.0",
+    "firebase-functions": "^6.6.0",
+    "googleapis": "^164.1.0",
+    "twilio": "^5.10.3"
+  },
+  "scripts": {
+    "ci": "npm ci",
+    "list:exports": "node tools/list-exports.js",
+    "verify:exports": "node tools/verify-exports.js",
+    "audit:v1": "bash ../scripts/audit-v1-apis.sh"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0"
+  }
+}
