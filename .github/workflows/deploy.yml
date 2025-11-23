@@ -36,7 +36,7 @@ jobs:
       functions: ${{ steps.filter.outputs.functions }}
       rules: ${{ steps.filter.outputs.rules }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - id: filter
         uses: dorny/paths-filter@v3
@@ -65,7 +65,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Run color guard
         run: python3 ./scripts/scan_colors.py
@@ -299,7 +299,7 @@ jobs:
     # FIXED: Don't depend on build job - functions can deploy independently
     if: needs.changes.outputs.functions == 'true' || needs.changes.outputs.rules == 'true'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
